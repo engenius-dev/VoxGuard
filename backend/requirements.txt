@@ -1,0 +1,10 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+redis==5.2.1
+torch>=2.6.0
+torchaudio>=2.6.0
+librosa
+numpy
+pydantic-settings
+python-multipart
+httpx
