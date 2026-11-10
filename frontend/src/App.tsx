@@ -33,10 +33,16 @@ export default function App(): JSX.Element {
   const [auditLoading, setAuditLoading] = useState<boolean>(true);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [metricsAvailable, setMetricsAvailable] = useState<boolean>(false);
-  const activeCriticalAlert =
-    alerts.find((alert) => alert.status === "CRITICAL_THREAT") ?? null;
-  const diriScore =
-    stream.lastResult?.diri_score ?? activeCriticalAlert?.diri_score ?? 0;
+  const activeCriticalAlert = stream.isStreaming
+    ? alerts.find(
+        (alert) =>
+          alert.session_id === stream.sessionId &&
+          alert.status === "CRITICAL_THREAT",
+      ) ?? null
+    : null;
+  const diriScore = stream.isStreaming
+    ? stream.lastResult?.diri_score ?? activeCriticalAlert?.diri_score ?? 0
+    : 0;
   const systemOperational = metricsAvailable && alertSocket.isConnected;
 
   const refreshDashboard = useCallback(async (): Promise<void> => {
