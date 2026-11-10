@@ -50,16 +50,19 @@ class RedisManager:
     async def append_audio_frame(self, session_id: str, frame_bytes: bytes) -> None:
         client = self._get_client()
         key = self._buffer_key(session_id)
+        
+        # Hardcode the sliding window duration to 4 seconds (4000ms) for AASIST
+        window_duration_ms = 4000
         max_frames = max(
-            1, settings.BUFFER_DURATION_MS // settings.FRAME_DURATION_MS
+            1, window_duration_ms // settings.FRAME_DURATION_MS
         )
 
         try:
             async with client.pipeline(transaction=True) as pipeline:
                 await (
                     pipeline.rpush(key, frame_bytes)
-                    .ltrim(key, -max_frames, -1)
-                    .pexpire(key, settings.BUFFER_DURATION_MS)
+                    .ltrim(key, -max_frames, -1) # Keeps only the most recent 4 seconds
+                    .pexpire(key, 10000)         # 10s expiry to prevent deletion during network hiccups
                     .execute()
                 )
         except RedisTimeoutError as exc:
@@ -68,6 +71,22 @@ class RedisManager:
             raise ConnectionError(
                 "Could not append an audio frame to Redis"
             ) from exc
+
+    async def get_sliding_window(self, session_id: str) -> bytes:
+        # Reads the current 4-second buffer WITHOUT purging it
+        client = self._get_client()
+        key = self._buffer_key(session_id)
+
+        try:
+            frames = await client.lrange(key, 0, -1)
+        except RedisTimeoutError as exc:
+            raise TimeoutError("Timed out reading the sliding window") from exc
+        except RedisConnectionError as exc:
+            raise ConnectionError("Could not read the sliding window") from exc
+
+        if not frames:
+            return b""
+        return b"".join(frames)
 
     async def get_buffer_size(self, session_id: str) -> int:
         client = self._get_client()

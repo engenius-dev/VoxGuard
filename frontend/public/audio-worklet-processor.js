@@ -1,51 +1,42 @@
 class PCMWorkletProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.targetSampleRate = 16000;
-    this.frameSize = 320;
-    this.sourceCursor = 0;
-    this.pendingSamples = new Float32Array(0);
-    this.frame = new Int16Array(this.frameSize);
+    this.frameSize = 320; // 20ms frame at 16kHz
+    this.frameBuffer = new ArrayBuffer(this.frameSize * 2);
+    this.frameView = new DataView(this.frameBuffer);
     this.frameCursor = 0;
   }
 
   process(inputs) {
+    if (sampleRate !== 16000) {
+      this.port.postMessage({
+        type: "error",
+        message: `Expected 16 kHz input, got ${sampleRate} Hz`,
+      });
+      return false;
+    }
+
     const channel = inputs[0]?.[0];
     if (!channel || channel.length === 0) {
       return true;
     }
 
-    const combined = new Float32Array(this.pendingSamples.length + channel.length);
-    combined.set(this.pendingSamples);
-    combined.set(channel, this.pendingSamples.length);
-
-    const ratio = sampleRate / this.targetSampleRate;
-    while (this.sourceCursor + 1 < combined.length) {
-      const lowerIndex = Math.floor(this.sourceCursor);
-      const fraction = this.sourceCursor - lowerIndex;
-      const sample =
-        combined[lowerIndex] * (1 - fraction) +
-        combined[lowerIndex + 1] * fraction;
-      const clamped = Math.max(-1, Math.min(1, sample));
-      this.frame[this.frameCursor] =
-        clamped < 0 ? Math.round(clamped * 32768) : Math.round(clamped * 32767);
+    for (let i = 0; i < channel.length; i++) {
+      const sample = Math.max(-1, Math.min(1, channel[i]));
+      const pcmSample =
+        sample < 0 ? Math.round(sample * 32768) : Math.round(sample * 32767);
+      this.frameView.setInt16(this.frameCursor * 2, pcmSample, true);
       this.frameCursor += 1;
-      this.sourceCursor += ratio;
 
       if (this.frameCursor === this.frameSize) {
-        const pcmFrame = this.frame.buffer;
+        const pcmFrame = this.frameBuffer;
         this.port.postMessage(pcmFrame, [pcmFrame]);
-        this.frame = new Int16Array(this.frameSize);
+        this.frameBuffer = new ArrayBuffer(this.frameSize * 2);
+        this.frameView = new DataView(this.frameBuffer);
         this.frameCursor = 0;
       }
     }
 
-    const consumedSamples = Math.min(
-      Math.floor(this.sourceCursor),
-      combined.length - 1,
-    );
-    this.pendingSamples = combined.slice(consumedSamples);
-    this.sourceCursor -= consumedSamples;
     return true;
   }
 }

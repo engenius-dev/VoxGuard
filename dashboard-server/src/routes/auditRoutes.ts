@@ -51,9 +51,18 @@ export function createAuditRouter(alertRelay: AlertRelay): Router {
 
       try {
         const alert = request.body;
-        const savedAlert = await AuditLog.create(alert);
+        
+        // Use findOneAndUpdate with upsert to prevent database row spamming.
+        // It searches by session_id: if it exists, it overwrites the score. 
+        // If it doesn't exist, it creates a new document.
+        const savedAlert = await AuditLog.findOneAndUpdate(
+          { session_id: alert.session_id },
+          alert,
+          { upsert: true, new: true, runValidators: true }
+        );
+        
         alertRelay.broadcastAlert(alert);
-        response.status(201).json({ data: savedAlert });
+        response.status(200).json({ data: savedAlert });
       } catch (error: unknown) {
         next(error);
       }

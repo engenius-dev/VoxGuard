@@ -13,6 +13,10 @@ interface UseAudioStreamResult {
   waveformData: Float32Array;
 }
 
+type AudioContextWindow = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
 function createSessionId(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -72,6 +76,8 @@ export function useAudioStream(): UseAudioStreamResult {
 
   const stopStream = useCallback((): void => {
     releaseResources();
+    setLastResult(null);
+    setWaveformData(new Float32Array(0));
     setStatus("idle");
   }, [releaseResources]);
 
@@ -102,7 +108,18 @@ export function useAudioStream(): UseAudioStreamResult {
       });
       streamRef.current = mediaStream;
 
-      const audioContext = new AudioContext();
+      const AudioContextConstructor =
+        window.AudioContext ?? (window as AudioContextWindow).webkitAudioContext;
+      if (!AudioContextConstructor) {
+        throw new Error("Web Audio is not supported in this browser.");
+      }
+      const audioContext = new AudioContextConstructor({ sampleRate: 16000 });
+      if (audioContext.sampleRate !== 16000) {
+        await audioContext.close();
+        throw new Error(
+          `Expected 16 kHz AudioContext, got ${audioContext.sampleRate} Hz.`,
+        );
+      }
       audioContextRef.current = audioContext;
       await audioContext.resume();
       await audioContext.audioWorklet.addModule("/audio-worklet-processor.js");
@@ -174,7 +191,23 @@ export function useAudioStream(): UseAudioStreamResult {
       );
       const silentOutput = audioContext.createGain();
       silentOutput.gain.value = 0;
-      worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>): void => {
+      worklet.port.onmessage = (event: MessageEvent<unknown>): void => {
+        if (
+          typeof event.data === "object" &&
+          event.data !== null &&
+          "type" in event.data &&
+          event.data.type === "error" &&
+          "message" in event.data &&
+          typeof event.data.message === "string"
+        ) {
+          setError(event.data.message);
+          stopStream();
+          setStatus("error");
+          return;
+        }
+        if (!(event.data instanceof ArrayBuffer)) {
+          return;
+        }
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(event.data);
         }
