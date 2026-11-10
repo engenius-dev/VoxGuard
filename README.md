@@ -6,21 +6,21 @@ VoxGuard is an end-to-end, real-time audio analysis pipeline designed to detect 
 
 The pipeline operates on a high-throughput, zero-disk-retention microservices model prioritizing clean, self-contained execution logic:
 
-1. **Frontend (React/Vite):** Captures microphone audio using HTML5 `AudioWorklet`, slices it into 20ms PCM frames, and streams it via binary WebSockets.
-2. **AI Gateway (FastAPI):** Receives the WebSocket stream, buffers frames in an ephemeral Redis RAM store, and reconstructs 500ms audio chunks without relying on heavy external I/O modules.
-3. **DSP & Inference Engine (PyTorch):** Converts PCM chunks to log-mel spectrograms and passes them through the pre-trained AASIST-Lite model to generate a raw authenticity score.
-4. **SIEM Audit Server (Express):** Receives the final session telemetry via HTTP POST from FastAPI and persists the forensic trail to MongoDB using strict Mongoose schemas.
+1. **Frontend (React/Vite):** Captures microphone audio using HTML5 `AudioWorklet`. Enforces a strict 16kHz `AudioContext` to prevent resampling aliasing, quantizes directly to 16-bit PCM, slices it into 20ms frames, and streams it via binary WebSockets.
+2. **AI Gateway (FastAPI):** Receives the WebSocket stream and maintains an ephemeral **4-second sliding window** in a Redis RAM buffer. It utilizes an RMS-based Voice Activity Detection (VAD) gate to seamlessly bypass inference during silence and room noise.
+3. **DSP & Inference Engine (PyTorch):** Bypasses standard spectrograms to feed raw PCM audio directly into a Sinc-convolutional front-end. It runs the pre-trained official **AASIST-L Graph Attention Network** to generate real-time raw authenticity scores.
+4. **SIEM Audit Server (Express):** Tracks the *peak* threat score over the duration of the stream. Upon WebSocket termination, FastAPI makes a single HTTP POST request to the Express server, which uses `findOneAndUpdate` (upsert) to persist exactly one clean forensic document per session to MongoDB.
 
 ## 🛠️ Tech Stack
 
 **Frontend (Security Dashboard)**
 * React 18, TypeScript, Vite
-* HTML5 Audio API & AudioWorklet
+* HTML5 Audio API & AudioWorklet (Native 16kHz processing)
 * Lucide React (Icons)
 
 **AI Backend (Ingestion & DSP)**
 * Python 3.11+, FastAPI, Uvicorn
-* PyTorch, Librosa, Torchaudio
+* PyTorch, Torchaudio
 * Redis (Volatile Sliding Buffer)
 
 **Audit Gateway (Telemetry & Storage)**
@@ -130,7 +130,7 @@ npm run dev
 
 * **URL:** ws://localhost:8000/ws/ingest/{session_id}
 * **Protocol:** Binary ArrayBuffer
-* **Description:** Receives 20ms PCM audio chunks and returns live JSON threat scores.
+* **Description:** Receives 20ms PCM audio chunks, calculates 4-second sliding windows, and returns live JSON threat scores.
 
 ### REST Telemetry (Express)
 
@@ -141,9 +141,9 @@ npm run dev
 {
   "timestamp": "2026-11-01T22:00:00.000Z",
   "session_id": "uuid-string",
-  "diri_score": 54.0,
-  "status": "WARNING",
-  "model_confidence": 0.54
+  "diri_score": 96.4,
+  "status": "CRITICAL_THREAT",
+  "model_confidence": 0.964
 }
 ```
 
